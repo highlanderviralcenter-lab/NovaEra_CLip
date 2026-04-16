@@ -1,0 +1,80 @@
+#!/bin/bash
+set -euo pipefail
+
+PROJETO_DIR="${HOME}/ClipFusion_V2_FINAL"
+cat > "$PROJETO_DIR"/src/gui/main_gui.py << 'EOF'
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+import threading, os, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from db import get_db
+from core.transcriber import Transcriber, extract_audio
+from core.segment import segment_by_pauses
+from core.scoring import ScoringEngine
+from core.decision import DecisionEngine
+from core.render import RenderEngine
+
+class ClipFusionApp:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("ClipFusion That Works")
+        self.root.geometry("900x700")
+        self.root.configure(bg="#2e2e2e")
+        self.create_widgets()
+    def create_widgets(self):
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill='both', expand=True)
+        # Aba Projeto
+        self.proj_frame = ttk.Frame(nb)
+        nb.add(self.proj_frame, text="Projeto")
+        self.video_path = tk.StringVar()
+        tk.Label(self.proj_frame, text="Vídeo:").grid(row=0, column=0, sticky='w')
+        tk.Entry(self.proj_frame, textvariable=self.video_path, width=50).grid(row=0, column=1)
+        tk.Button(self.proj_frame, text="Selecionar", command=self.select_video).grid(row=0, column=2)
+        tk.Button(self.proj_frame, text="Processar", command=self.process).grid(row=1, column=1)
+        # Aba Log
+        self.log_frame = ttk.Frame(nb)
+        nb.add(self.log_frame, text="Log")
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=30)
+        self.log_text.pack(fill='both', expand=True)
+    def select_video(self):
+        path = filedialog.askopenfilename(filetypes=[("MP4", "*.mp4")])
+        if path: self.video_path.set(path)
+    def log(self, msg): self.log_text.insert('end', msg + '\n'); self.log_text.see('end')
+    def process(self):
+        if not self.video_path.get(): return
+        threading.Thread(target=self._process, daemon=True).start()
+    def _process(self):
+        try:
+            self.log("Iniciando...")
+            audio = extract_audio(self.video_path.get())
+            self.log("Transcrevendo...")
+            t = Transcriber()
+            segs, lang = t.transcribe(audio)
+            t.unload()
+            self.log(f"Segmentos: {len(segs)}")
+            cands = segment_by_pauses(segs)
+            scorer = ScoringEngine()
+            decider = DecisionEngine()
+            for c in cands[:10]:
+                scores = scorer.calculate(c)
+                decision, _ = decider.decide(scores['final'])
+                self.log(f"{c['start']:.1f}s-{c['end']:.1f}s score={scores['final']} -> {decision}")
+                if decision == 'approved':
+                    out_dir = Path.home() / "clipfusion_output"
+                    out_dir.mkdir(exist_ok=True)
+                    out = out_dir / f"cut_{c['start']:.0f}_{c['end']:.0f}.mp4"
+                    render = RenderEngine()
+                    if render.render(self.video_path.get(), str(out), c['start'], c['end']):
+                        self.log(f"Renderizado: {out}")
+            self.log("Concluído.")
+        except Exception as e:
+            self.log(f"Erro: {e}")
+    def run(self): self.root.mainloop()
+
+if __name__ == "__main__":
+    app = ClipFusionApp()
+    app.run()
+EOF
+echo "✅ Parte 6 concluída: GUI"

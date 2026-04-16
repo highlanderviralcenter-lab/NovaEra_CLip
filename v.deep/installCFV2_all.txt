@@ -1,0 +1,34 @@
+#!/bin/bash
+set -euo pipefail
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+
+echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  ClipFusion V2 - Instalador Completo   ║${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+
+# Executa cada parte, validando a criação do diretório alvo
+PROJETO_DIR="${HOME}/ClipFusion_V2_FINAL"
+
+run_part() {
+    local script="$1"
+    local desc="$2"
+    echo -e "\n${YELLOW}▶ ${desc}...${NC}"
+    bash "$script"
+    if [ -d "$PROJETO_DIR/src/core" ]; then
+        echo -e "${GREEN}✅ ${desc} - sucesso${NC}"
+    else
+        echo -e "${RED}❌ Falha crítica: ${desc} não completou.${NC}"
+        exit 1
+    fi
+}
+
+run_part parte1_estrutura.sh "1/7 Estrutura de diretórios"
+run_part parte2_db.sh          "2/7 Banco de dados"
+run_part parte3_transcriber.sh "3/7 Transcrição (faster-whisper)"
+run_part parte4_scoring.sh     "4/7 Segmentação, scoring, decisão"
+run_part parte5_render.sh      "5/7 Renderização VA-API"
+run_part parte6_gui.sh         "6/7 Interface GUI"
+run_part parte7_finalizacao.sh "7/7 Script run.sh e validação"
+
+echo -e "\n${GREEN}✅ Instalação concluída com sucesso!${NC}"
+echo -e "Para executar: cd ${PROJETO_DIR} && ./run.sh"

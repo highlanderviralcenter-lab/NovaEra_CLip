@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+
+PROJETO_DIR="${HOME}/ClipFusion_V2_FINAL"
+cat > "$PROJETO_DIR"/src/db.py << 'EOF'
+import sqlite3, json, threading
+from pathlib import Path
+from contextlib import contextmanager
+
+DB_PATH = Path.home() / ".clipfusion" / "clipfusion.db"
+
+class Database:
+    def __init__(self):
+        self._local = threading.local()
+        self._init_db()
+    def _get_conn(self):
+        if not hasattr(self._local, 'conn') or self._local.conn is None:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self._local.conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+            self._local.conn.row_factory = sqlite3.Row
+            self._local.conn.execute("PRAGMA journal_mode=WAL")
+        return self._local.conn
+    def _init_db(self):
+        conn = self._get_conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY,
+                name TEXT, video_path TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS transcripts (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER,
+                segments TEXT, full_text TEXT, language TEXT
+            );
+            CREATE TABLE IF NOT EXISTS candidates (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER,
+                start_time REAL, end_time REAL, text TEXT,
+                hook_strength REAL DEFAULT 0.0,
+                moment_strength REAL DEFAULT 0.0,
+                retention_score REAL DEFAULT 0.0,
+                shareability REAL DEFAULT 0.0,
+                final_score REAL DEFAULT 0.0,
+                status TEXT DEFAULT 'pending'
+            );
+            CREATE TABLE IF NOT EXISTS cuts (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER, candidate_id INTEGER,
+                output_path TEXT, platform TEXT,
+                protection_level TEXT DEFAULT 'none',
+                decision TEXT
+            );
+        """)
+        conn.commit()
+_db = None
+def get_db():
+    global _db
+    if _db is None: _db = Database()
+    return _db
+EOF
+echo "✅ Parte 2 concluída: db.py criado"

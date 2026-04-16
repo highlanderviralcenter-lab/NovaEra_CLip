@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+PROJETO_DIR="${HOME}/ClipFusion_V2_FINAL"
+cat > "$PROJETO_DIR"/src/core/render.py << 'EOF'
+import subprocess, gc
+class RenderEngine:
+    def __init__(self, vaapi_device="/dev/dri/renderD128"):
+        self.vaapi = vaapi_device
+    def render(self, input_video, output_video, start, end, protection='basic'):
+        duration = end - start
+        filters = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,format=nv12,hwupload"
+        if protection == 'basic':
+            filters = "eq=brightness=0.01:contrast=1.02," + filters
+        cmd = ["ffmpeg", "-y", "-hwaccel", "vaapi", "-hwaccel_device", self.vaapi,
+               "-i", input_video, "-ss", str(start), "-t", str(duration),
+               "-vf", filters, "-c:v", "h264_vaapi", "-qp", "24",
+               "-c:a", "aac", "-b:a", "128k",
+               "-metadata", "encoder=ClipFusion", "-metadata", "creation_time=now",
+               output_video]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        gc.collect()
+        return result.returncode == 0
+EOF
+echo "✅ Parte 5 concluída: render.py"

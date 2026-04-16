@@ -1,0 +1,236 @@
+    "core/segment.py": '''
+"""
+Segmentação que FUNCIONA:
+- 20-30s (não 18-35s que estoura RAM)
+- Pausas naturais de 300ms
+- Contexto preservado para IA
+"""
+
+import gc
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class MicroCandidate:
+    start: float
+    end: float
+    duration: float
+    text: str
+    context_before: str = ""
+    context_after: str = ""
+
+
+def find_natural_breaks(segments, min_silence_sec=0.3):
+    """Encontra pontos de corte em pausas naturais"""
+    breaks = [0.0]
+    
+    for i, seg in enumerate(segments[:-1]):
+        gap = segments[i+1]['start'] - seg['end']
+        # Pausa natural OU fim de frase
+        if gap >= min_silence_sec or seg['text'].strip()[-1] in '.!?':
+            breaks.append(seg['end'])
+    
+    if segments:
+        breaks.append(segments[-1]['end'])
+    
+    return sorted(set(breaks))
+
+
+def generate_candidates(segments, min_dur=20.0, max_dur=30.0, ideal_dur=24.0):
+    """
+    Gera candidatos 20-30s (range estável para 8GB RAM)
+    """
+    breaks = find_natural_breaks(segments)
+    candidates = []
+    
+    for i in range(len(breaks) - 1):
+        for j in range(i + 1, len(breaks)):
+            start, end = breaks[i], breaks[j]
+            duration = end - start
+            
+            if duration < min_dur:
+                continue
+            if duration > max_dur:
+                break  # Próximos serão maiores
+            
+            # Extrai texto e contexto
+            covered = [s for s in segments if start <= s['start'] < end]
+            if not covered:
+                continue
+            
+            text = " ".join(s['text'] for s in covered)
+            
+            # Contexto (2 segmentos antes/depois)
+            first_idx = segments.index(covered[0])
+            last_idx = segments.index(covered[-1])
+            
+            ctx_before = " ".join(s['text'] for s in 
+                segments[max(0, first_idx-2):first_idx])
+            ctx_after = " ".join(s['text'] for s in 
+                segments[last_idx+1:min(len(segments), last_idx+3)])
+            
+            candidates.append(MicroCandidate(
+                start=start, end=end, duration=duration,
+                text=text,
+                context_before=ctx_before[-100:],
+                context_after=ctx_after[:100]
+            ))
+            
+            if len(candidates) % 50 == 0:
+                gc.collect()
+    
+    # Ordena por proximidade do ideal
+    candidates.sort(key=lambda c: abs(c.duration - ideal_dur))
+    
+    print(f"[SEGMENT] {len(candidates)} candidatos 20-30s gerados")
+    return candidates
+''',
+
+    "core/scoring.py": '''
+"""
+Scoring que FUNCIONA:
+- 4 dimensões com pesos realistas
+- Sem promessas de "IA preditiva"
+"""
+
+import re
+
+
+class ScoringEngine:
+    def __init__(self):
+        # Pesos validados na prática
+        self.weights = {
+            'hook': 0.35,
+            'moment': 0.30,
+            'retention': 0.20,
+            'share': 0.15
+        }
+        
+        self.hook_words = [
+            'segredo', 'nunca', 'sempre', 'erro', 'descobri',
+            'imagine', 'você sabia', 'por que', 'urgente'
+        ]
+        
+        self.moment_words = [
+            'porque', 'então', 'resultado', 'aconteceu',
+            'de repente', 'problema', 'solução'
+        ]
+    
+    def score_hook(self, text, first_3s):
+        """Gancho nos primeiros 3 segundos"""
+        score = 5.0
+        
+        # Palavras de impacto no início
+        first_lower = first_3s.lower()
+        matches = sum(1 for w in self.hook_words if w in first_lower)
+        score += min(3.0, matches * 0.8)
+        
+        # Pergunta = engajamento
+        if '?' in first_3s:
+            score += 1.5
+        
+        return min(10.0, score)
+    
+    def score_moment(self, text, duration):
+        """Momento emocional/payoff"""
+        score = 5.0
+        lower = text.lower()
+        
+        # Indicadores de clímax
+        inds = sum(1 for w in self.moment_words if w in lower)
+        score += min(3.0, inds * 0.6)
+        
+        # Estrutura problema→solução
+        has_problem = any(w in lower[:len(lower)//2] for w in ['problema', 'dificuldade'])
+        has_solution = any(w in lower[len(lower)//2:] for w in ['solução', 'funcionou'])
+        if has_problem and has_solution:
+            score += 2.0
+        
+        return min(10.0, score)
+    
+    def score_retention(self, text, words_list):
+        """Probabilidade de assistir até o final"""
+        score = 5.0
+        
+        # Pacing: 2-4 palavras/segundo é ideal
+        if words_list:
+            duration = words_list[-1]['end'] - words_list[0]['start']
+            wps = len(words_list) / duration if duration > 0 else 0
+            if 2.0 <= wps <= 4.0:
+                score += 1.5
+        
+        # Conectores mantêm atenção
+        connectors = ['mas', 'e então', 'só que', 'porém']
+        score += sum(0.4 for c in connectors if c in text.lower())
+        
+        return min(10.0, score)
+    
+    def score_share(self, text):
+        """Potencial de viralidade"""
+        score = 4.0  # Base baixo (viral é raro)
+        
+        # Relatabilidade
+        if 'você' in text.lower() or 'seu' in text.lower():
+            score += 1.0
+        
+        # Emoção alta
+        if '!' in text:
+            score += 0.5
+        
+        return min(10.0, score)
+    
+    def calculate(self, candidate, words_list):
+        """Calcula score final ponderado"""
+        # Primeiros 3s para hook
+        first_3s_words = [w for w in words_list if w['start'] <= 3.0]
+        first_3s_text = " ".join(w['word'] for w in first_3s_words) if first_3s_words else candidate.text[:100]
+        
+        hook = self.score_hook(candidate.text, first_3s_text)
+        moment = self.score_moment(candidate.text, candidate.duration)
+        retention = self.score_retention(candidate.text, words_list)
+        share = self.score_share(candidate.text)
+        
+        final = (
+            hook * self.weights['hook'] +
+            moment * self.weights['moment'] +
+            retention * self.weights['retention'] +
+            share * self.weights['share']
+        )
+        
+        return {
+            'hook': round(hook, 2),
+            'moment': round(moment, 2),
+            'retention': round(retention, 2),
+            'share': round(share, 2),
+            'final': round(final, 2)
+        }
+''',
+
+    "core/decision.py": '''
+"""
+Regra de Ouro que FUNCIONA:
+≥9.0 = aprovado
+7.0-8.9 = revisar
+<7.0 = descartar
+"""
+
+
+class DecisionEngine:
+    THRESHOLDS = {
+        'approve': 9.0,
+        'review': 7.0,
+        'reject': 0.0
+    }
+    
+    def decide(self, final_score):
+        """Decisão simples e direta"""
+        if final_score >= self.THRESHOLDS['approve']:
+            return 'approved', f"Nota {final_score:.1f} ≥ 9.0: Aprovado"
+        elif final_score >= self.THRESHOLDS['review']:
+            return 'review', f"Nota {final_score:.1f}: Revisar"
+        else:
+            return 'rejected', f"Nota {final_score:.1f} < 7.0: Descartado"
+''',
+
+

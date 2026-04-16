@@ -1,0 +1,62 @@
+#!/bin/bash
+set -euo pipefail
+
+PROJETO_DIR="${HOME}/ClipFusion_V2_FINAL"
+cat > "$PROJETO_DIR"/src/core/segment.py << 'EOF'
+def segment_by_pauses(segments, min_dur=20.0, max_dur=30.0, pause_ms=300):
+    breaks = [0.0]
+    for i, seg in enumerate(segments[:-1]):
+        gap = segments[i+1]['start'] - seg['end']
+        if gap >= pause_ms/1000.0 or seg['text'].strip()[-1] in '.!?':
+            breaks.append(seg['end'])
+    breaks.append(segments[-1]['end'])
+    candidates = []
+    for i in range(len(breaks)-1):
+        for j in range(i+1, len(breaks)):
+            dur = breaks[j] - breaks[i]
+            if dur < min_dur: continue
+            if dur > max_dur: break
+            text = " ".join(s['text'] for s in segments if breaks[i] <= s['start'] < breaks[j])
+            candidates.append({"start": breaks[i], "end": breaks[j], "text": text})
+    return candidates[:20]
+EOF
+
+cat > "$PROJETO_DIR"/src/core/scoring.py << 'EOF'
+import re
+class ScoringEngine:
+    def __init__(self):
+        self.weights = {'hook':0.35, 'moment':0.30, 'retention':0.20, 'share':0.15}
+        self.hook_words = ['segredo','nunca','erro','descobri','você sabia','urgente']
+        self.moment_words = ['porque','então','resultado','de repente','solução']
+    def score_hook(self, text, first_3s):
+        score = 5.0 + sum(0.8 for w in self.hook_words if w in first_3s.lower()) + (1.5 if '?' in first_3s else 0)
+        return min(10.0, score)
+    def score_moment(self, text):
+        score = 5.0 + sum(0.6 for w in self.moment_words if w in text.lower())
+        return min(10.0, score)
+    def score_retention(self, text):
+        score = 5.0 + sum(0.4 for c in ['mas','e então','porém'] if c in text.lower())
+        return min(10.0, score)
+    def score_share(self, text):
+        score = 4.0 + (1.0 if 'você' in text.lower() else 0) + (0.5 if '!' in text else 0)
+        return min(10.0, score)
+    def calculate(self, candidate):
+        first_3s = candidate['text'][:100]
+        hook = self.score_hook(candidate['text'], first_3s)
+        moment = self.score_moment(candidate['text'])
+        retention = self.score_retention(candidate['text'])
+        share = self.score_share(candidate['text'])
+        final = (hook*self.weights['hook'] + moment*self.weights['moment'] +
+                 retention*self.weights['retention'] + share*self.weights['share'])
+        return {'hook':round(hook,2), 'moment':round(moment,2),
+                'retention':round(retention,2), 'share':round(share,2), 'final':round(final,2)}
+EOF
+
+cat > "$PROJETO_DIR"/src/core/decision.py << 'EOF'
+class DecisionEngine:
+    def decide(self, final_score):
+        if final_score >= 9.0: return 'approved', f"Nota {final_score:.1f} ≥ 9.0: Aprovado"
+        if final_score >= 7.0: return 'review', f"Nota {final_score:.1f}: Revisar"
+        return 'rejected', f"Nota {final_score:.1f} < 7.0: Descartar"
+EOF
+echo "✅ Parte 4 concluída: segment, scoring, decision"

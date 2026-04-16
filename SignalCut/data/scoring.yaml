@@ -1,0 +1,195 @@
+# SignalCut Hybrid — Configuração de Scoring e Arquétipos
+# Este arquivo é atualizado automaticamente pelo learning_engine.py
+# com base na performance real das plataformas.
+
+version: "1.0"
+
+# ─── Pesos do Combined Score ──────────────────────────────────────────────────
+combined_weights:
+  hook_strength:          0.30   # Impacto nos primeiros 3s (scroll stop)
+  retention_score:        0.25   # Arco narrativo e conectivos de continuidade
+  moment_strength:        0.20   # Clímax, virada, punchline
+  shareability:           0.15   # Potencial de recompartilhamento
+  platform_fit:           0.10   # Adequação às regras da plataforma
+
+# ─── Fórmula do Decision Engine ──────────────────────────────────────────────
+decision_weights:
+  local_score:            0.50
+  external_score:         0.30
+  platform_fit:           0.10
+  duration_fit:           0.05
+  transcription_quality:  0.05
+
+# ─── Limiares de Decisão ─────────────────────────────────────────────────────
+decision_thresholds:
+  aprovado:   9.0    # Render imediato
+  rework:     7.0    # Revisão manual
+  descartar:  0.0    # Abaixo de 7.0
+
+# ─── Faixa de Duração Alvo ───────────────────────────────────────────────────
+duration:
+  min_seconds:   18
+  max_seconds:   35
+  ideal_seconds: 27
+  penalty_per_second_over:  0.05
+  penalty_per_second_under: 0.08
+
+# ─── Arquétipos Emocionais ────────────────────────────────────────────────────
+# weight: peso inicial (atualizado pelo learning_engine)
+# triggers: palavras/padrões que ativam o arquétipo
+archetypes:
+
+  curiosidade:
+    weight: 0.30
+    triggers:
+      - "segredo"
+      - "ninguém conta"
+      - "poucos sabem"
+      - "descobri"
+      - "revelação"
+      - "você não sabe"
+      - "mistério"
+    hook_bonus: 0.15
+    platforms: [tiktok, reels, shorts]
+
+  medo_urgencia:
+    weight: 0.28
+    triggers:
+      - "pare agora"
+      - "cuidado"
+      - "perigo"
+      - "erro fatal"
+      - "antes que"
+      - "urgente"
+      - "último momento"
+    hook_bonus: 0.18
+    platforms: [tiktok, reels]
+
+  indignacao:
+    weight: 0.27
+    triggers:
+      - "absurdo"
+      - "verdade oculta"
+      - "estão escondendo"
+      - "não acredito"
+      - "revoltante"
+      - "injusto"
+      - "escandaloso"
+    hook_bonus: 0.12
+    platforms: [tiktok, reels, shorts]
+
+  ganancia:
+    weight: 0.26
+    triggers:
+      - "lucro"
+      - "multiplique"
+      - "ganhar dinheiro"
+      - "rico"
+      - "renda passiva"
+      - "investimento"
+      - "retorno"
+    hook_bonus: 0.10
+    platforms: [youtube, tiktok]
+
+  transformacao:
+    weight: 0.25
+    triggers:
+      - "antes e depois"
+      - "mudou minha vida"
+      - "transformação"
+      - "evolução"
+      - "nunca mais fui o mesmo"
+      - "virei a chave"
+    hook_bonus: 0.12
+    platforms: [reels, shorts, tiktok]
+
+  prova_social:
+    weight: 0.24
+    triggers:
+      - "milhares de pessoas"
+      - "todo mundo"
+      - "viral"
+      - "todo o brasil"
+      - "mais de mil"
+    hook_bonus: 0.08
+    platforms: [tiktok, reels]
+
+  exclusividade:
+    weight: 0.23
+    triggers:
+      - "método secreto"
+      - "exclusivo"
+      - "acesso vip"
+      - "restrito"
+      - "poucos têm"
+    hook_bonus: 0.10
+    platforms: [youtube, reels]
+
+  autoridade:
+    weight: 0.22
+    triggers:
+      - "especialista"
+      - "ciência prova"
+      - "estudo mostra"
+      - "pesquisa"
+      - "comprovado"
+      - "doutor"
+    hook_bonus: 0.08
+    platforms: [youtube, shorts]
+
+  alivio:
+    weight: 0.21
+    triggers:
+      - "finalmente"
+      - "solução definitiva"
+      - "resolveu"
+      - "acabou o sofrimento"
+      - "funciona de verdade"
+    hook_bonus: 0.10
+    platforms: [reels, shorts]
+
+  empatia:
+    weight: 0.20
+    triggers:
+      - "você também"
+      - "sei como você se sente"
+      - "passei por isso"
+      - "dor comum"
+      - "todos nós"
+      - "se identifica"
+    hook_bonus: 0.12
+    platforms: [tiktok, reels, shorts]
+
+# ─── Padrões de Hook (primeiros 3 segundos) ──────────────────────────────────
+hook_patterns:
+  pergunta_retorica:
+    pattern: "\\?"
+    bonus: 0.12
+  numero_especifico:
+    pattern: "\\b\\d+\\b"
+    bonus: 0.08
+  imperativo:
+    pattern: "^(para|olha|veja|escuta|sabia|imagine)"
+    bonus: 0.10
+  negacao_forte:
+    pattern: "\\b(nunca|jamais|ninguém|impossível)\\b"
+    bonus: 0.09
+  tempo_limitado:
+    pattern: "\\b(agora|hoje|urgente|rápido|antes que)\\b"
+    bonus: 0.11
+
+# ─── Conectivos de Retenção (indicam arco narrativo) ─────────────────────────
+retention_connectives:
+  - "mas"
+  - "porém"
+  - "no entanto"
+  - "aí"
+  - "então"
+  - "e sabe o que aconteceu"
+  - "mas espera"
+  - "só que"
+  - "resultado"
+  - "conclusão"
+  - "o problema é"
+  - "a solução foi"
+  - "descobri que"

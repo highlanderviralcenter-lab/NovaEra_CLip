@@ -1,0 +1,34 @@
+#!/bin/bash
+set -euo pipefail
+
+PROJETO_DIR="${HOME}/ClipFusion_V2_FINAL"
+cat > "$PROJETO_DIR"/run.sh << 'EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+export LIBVA_DRIVER_NAME=i965
+export OMP_NUM_THREADS=2
+export MALLOC_ARENA_MAX=2
+export PYTHONPATH="$PWD/src"
+source venv/bin/activate 2>/dev/null || python3 -m venv venv && source venv/bin/activate
+pip install -q faster-whisper numpy
+python3 src/gui/main_gui.py
+EOF
+chmod +x "$PROJETO_DIR"/run.sh
+
+# Smoke test
+cd "$PROJETO_DIR"
+source venv/bin/activate
+pip install -q faster-whisper numpy
+python3 -c "
+import sys
+sys.path.insert(0, 'src')
+from core.transcriber import Transcriber
+from core.segment import segment_by_pauses
+from core.scoring import ScoringEngine
+from core.decision import DecisionEngine
+from core.render import RenderEngine
+from db import get_db
+print('✅ Todos os módulos importados com sucesso')
+"
+
+echo "✅ Parte 7 concluída: run.sh e validação"

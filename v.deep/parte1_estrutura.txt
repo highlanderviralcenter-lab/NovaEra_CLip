@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+PROJETO_DIR="${HOME}/ClipFusion_V2_FINAL"
+mkdir -p "$PROJETO_DIR"/{src/{core,gui,utils,config},workspace/{exports,logs,projects}}
+touch "$PROJETO_DIR"/src/__init__.py
+touch "$PROJETO_DIR"/src/core/__init__.py
+touch "$PROJETO_DIR"/src/gui/__init__.py
+touch "$PROJETO_DIR"/src/utils/__init__.py
+
+cat > "$PROJETO_DIR"/config/settings.yaml << 'EOF'
+# Configuração realista para i5-6200U
+whisper_model: "base"
+device: "cpu"
+compute_type: "int8"
+cpu_threads: 2
+beam_size: 1
+condition_on_previous_text: false
+min_duration: 20
+max_duration: 30
+pause_threshold_ms: 300
+protection_level: "basic"
+EOF
+
+echo "✅ Parte 1 concluída: estrutura criada em $PROJETO_DIR"

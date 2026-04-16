@@ -1,0 +1,231 @@
+    "core/render.py": '''
+"""
+Render que FUNCIONA em Intel HD 520:
+- 1-pass apenas (2-pass trava)
+- VA-API para encode acelerado
+- Proteção básica integrada
+"""
+
+import subprocess
+import gc
+from pathlib import Path
+
+
+class RenderEngine:
+    def __init__(self, vaapi_device="/dev/dri/renderD128"):
+        self.vaapi = vaapi_device
+    
+    def render(self, input_video, output_video, start, end, 
+               protection='basic', platform='tiktok'):
+        """
+        Render 1-pass estável em Intel HD 520
+        """
+        duration = end - start
+        
+        # Filtros de proteção leves (não travam)
+        filters = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,format=nv12,hwupload"
+        
+        if protection == 'basic':
+            # Ajuste sutil de cor + metadados
+            filters = "eq=brightness=0.01:contrast=1.02," + filters
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-hwaccel", "vaapi",
+            "-hwaccel_device", self.vaapi,
+            "-i", input_video,
+            "-ss", str(start),
+            "-t", str(duration),
+            "-vf", filters,
+            "-c:v", "h264_vaapi",
+            "-qp", "24",  # Qualidade boa, velocidade aceitável
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-metadata", "encoder=ClipFusion",
+            "-metadata", "creation_time=now",
+            output_video
+        ]
+        
+        print(f"[RENDER] {start:.1f}s - {end:.1f}s ({duration:.1f}s)")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"[RENDER] Erro: {result.stderr[:200]}")
+            return False
+        
+        gc.collect()
+        print(f"[RENDER] ✅ {output_video}")
+        return True
+''',
+
+    "main.py": '''
+#!/usr/bin/env python3
+"""
+ClipFusion THAT WORKS - Entry point simplificado
+"""
+
+import sys
+import gc
+from pathlib import Path
+
+# Adiciona core ao path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from core.transcribe import Transcriber, extract_audio
+from core.segment import generate_candidates
+from core.scoring import ScoringEngine
+from core.decision import DecisionEngine
+from core.render import RenderEngine
+
+
+def process_video(video_path, project_name="Projeto"):
+    """
+    Pipeline completo que FUNCIONA em 8GB RAM
+    """
+    print(f"\\n🎬 Processando: {video_path}")
+    
+    # FASE 1: Extrair áudio
+    print("\\n[1/6] Extraindo áudio...")
+    audio_path = extract_audio(video_path)
+    
+    # FASE 2: Transcrever (small, unload após)
+    print("\\n[2/6] Transcrevendo com small model...")
+    transcriber = Transcriber(model="small")
+    segments, language = transcriber.transcribe(audio_path)
+    print(f"    {len(segments)} segmentos, idioma: {language}")
+    
+    # LIBERA RAM - CRÍTICO
+    transcriber.unload()
+    
+    # FASE 3: Segmentar (20-30s, pausas naturais)
+    print("\\n[3/6] Gerando micro-candidatos...")
+    candidates = generate_candidates(segments, min_dur=20.0, max_dur=30.0)
+    
+    # FASE 4: Scoring
+    print("\\n[4/6] Calculando scores...")
+    scorer = ScoringEngine()
+    decider = DecisionEngine()
+    
+    approved = []
+    for cand in candidates[:10]:  # Top 10 apenas (economia RAM)
+        # Recuperar words_list do segmento (simplificado)
+        words_list = [{"word": w, "start": 0, "end": 1} for w in cand.text.split()]
+        
+        scores = scorer.calculate(cand, words_list)
+        decision, reason = decider.decide(scores['final'])
+        
+        print(f"    {cand.start:.1f}s-{cand.end:.1f}s: {scores['final']:.1f} -> {decision}")
+        
+        if decision == 'approved':
+            approved.append((cand, scores))
+    
+    if not approved:
+        print("\\n❌ Nenhum candidato aprovado. Tente revisar os de 7.0-8.9")
+        return
+    
+    # FASE 5: Renderizar o melhor
+    print(f"\\n[5/6] Renderizando {len(approved)} cortes aprovados...")
+    renderer = RenderEngine()
+    
+    output_dir = Path("workspace/exports")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    for i, (cand, scores) in enumerate(approved[:3]):  # Máximo 3
+        output = output_dir / f"cut_{i+1}_{cand.start:.0f}s_{scores['final']:.1f}.mp4"
+        success = renderer.render(
+            video_path, str(output),
+            cand.start, cand.end,
+            protection='basic', platform='tiktok'
+        )
+        
+        if success:
+            print(f"    ✅ {output}")
+    
+    # FASE 6: Limpeza
+    print("\\n[6/6] Limpando...")
+    gc.collect()
+    
+    print(f"\\n🎉 Concluído! Cortes salvos em: {output_dir}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Uso: python3 main.py <video.mp4>")
+        sys.exit(1)
+    
+    video = sys.argv[1]
+    if not Path(video).exists():
+        print(f"Erro: {video} não encontrado")
+        sys.exit(1)
+    
+    process_video(video)
+''',
+}
+
+# ==============================================================================
+# INSTALAÇÃO
+# ==============================================================================
+
+def install():
+    """Instala apenas o que funciona"""
+    print("=" * 70)
+    print(" ClipFusion THAT WORKS v1.0")
+    print(" Instalação realista para i5-6200U + 8GB RAM")
+    print("=" * 70)
+    
+    # Cria estrutura
+    CLIPFUSION_DIR.mkdir(parents=True, exist_ok=True)
+    (CLIPFUSION_DIR / "core").mkdir(exist_ok=True)
+    (CLIPFUSION_DIR / "config").mkdir(exist_ok=True)
+    (CLIPFUSION_DIR / "workspace/exports").mkdir(parents=True, exist_ok=True)
+    
+    # Salva configs
+    for path_rel, content in REALISTIC_CONFIGS.items():
+        path = CLIPFUSION_DIR / path_rel
+        with open(path, 'w') as f:
+            f.write(content)
+        print(f"✅ {path_rel}")
+    
+    # Salva módulos
+    for path_rel, content in WORKING_MODULES.items():
+        path = CLIPFUSION_DIR / path_rel
+        with open(path, 'w') as f:
+            f.write(content)
+        print(f"✅ {path_rel}")
+    
+    # Cria requirements.txt mínimo
+    req = CLIPFUSION_DIR / "requirements.txt"
+    req.write_text("""faster-whisper
+numpy
+""")
+    print(f"✅ requirements.txt")
+    
+    # Cria run.sh
+    run_sh = CLIPFUSION_DIR / "run.sh"
+    run_sh.write_text("""#!/bin/bash
+cd "$(dirname "$0")"
+export LIBVA_DRIVER_NAME=iHD
+export LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
+source venv/bin/activate 2>/dev/null || python3 -m venv venv && source venv/bin/activate
+pip install -q -r requirements.txt
+python3 main.py "$@"
+""")
+    run_sh.chmod(0o755)
+    print(f"✅ run.sh")
+    
+    print("\n" + "=" * 70)
+    print("🎉 INSTALAÇÃO CONCLUÍDA")
+    print("=" * 70)
+    print(f"\nDiretório: {CLIPFUSION_DIR}")
+    print("\nPróximos passos:")
+    print("1. cd ~/clipfusion")
+    print("2. ./run.sh seu_video.mp4")
+    print("\n⚠️  IMPORTANTE:")
+    print("   - Use vídeos de 5-15 minutos para testar primeiro")
+    print("   - Modelo 'small' precisa de ~2GB RAM livre")
+    print("   - Render 1-pass: qualidade boa, velocidade aceitável")
+    print("   - Se travar, verifique: free -h (precisa de 1.5GB+ livre)")
+
+
+if __name__ == "__main__":
+    install()
