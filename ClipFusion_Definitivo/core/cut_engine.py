@@ -5,8 +5,9 @@ Passo 1: Corte + escala via VA-API h264_vaapi (rápido, sem legenda)
 Passo 2: Burn legenda via libx264 (arquivo já pequeno = rápido também)
 Se VA-API indisponível: 1 passo com libx264 + legenda.
 """
-import subprocess, os, tempfile, shutil
+import subprocess, os, tempfile, shutil, gc
 from core.transcriber import fmt_time
+from memory_manager import get_memory_manager
 
 PLATFORM_CONFIGS = {
     "tiktok":  {"w": 1080, "h": 1920, "max_dur": 180, "crf": 20,
@@ -170,17 +171,108 @@ def render_cut(video_path: str, cut: dict, segments: list,
     return output_paths
 
 
+def _concat_chunks(chunk_files: list, out_path: str, progress_cb=None):
+    if not chunk_files:
+        return False
+    if len(chunk_files) == 1:
+        shutil.copy2(chunk_files[0], out_path)
+        return True
+
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        list_file = f.name
+        for path in chunk_files:
+            esc = path.replace("'", "'\\''")
+            f.write(f"file '{esc}'\n")
+
+    try:
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", list_file,
+            "-c", "copy",
+            out_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if r.returncode != 0 and progress_cb:
+            progress_cb(f"  ❌ Concat falhou: {r.stderr[-120:]}")
+        return r.returncode == 0
+    finally:
+        try:
+            os.remove(list_file)
+        except OSError:
+            pass
+
+
 def render_all(video_path: str, cuts: list, segments: list,
                output_dir: str, project_id: str,
                ace_level: str = "basic", use_vaapi: bool = True,
                progress_cb=None) -> dict:
-    import gc
+    mm = get_memory_manager()
     results = {}
     for i, cut in enumerate(cuts):
         if progress_cb:
             progress_cb(f"\n[{i+1}/{len(cuts)}] {cut.get('title','Corte')}")
-        paths = render_cut(video_path, cut, segments, output_dir,
-                           project_id, ace_level, use_vaapi, progress_cb)
-        results[cut.get("id", cut.get("cut_index", i))] = paths
-        gc.collect()  # GC explícito entre cortes (8GB RAM)
+
+        if not mm.request_allocation(700, priority="normal"):
+            gc.collect()
+            if progress_cb:
+                progress_cb("⚠️ Memória alta: pausa curta antes de seguir...")
+            if not mm.request_allocation(700, priority="critical"):
+                if progress_cb:
+                    progress_cb("❌ Sem memória para renderizar corte.")
+                continue
+
+        start = cut.get("start", cut.get("start_time", 0.0))
+        end = cut.get("end", cut.get("end_time", 0.0))
+        duration = max(0.0, float(end) - float(start))
+        chunk_size = 60.0
+
+        if duration <= chunk_size:
+            paths = render_cut(video_path, cut, segments, output_dir,
+                               project_id, ace_level, use_vaapi, progress_cb)
+            results[cut.get("id", cut.get("cut_index", i))] = paths
+            mm.release_allocation(700)
+            gc.collect()
+            continue
+
+        if progress_cb:
+            progress_cb(f"  ✂️ Chunked render: {int(duration // chunk_size) + 1} partes de 60s")
+
+        chunk_outputs = {}
+        base_idx = cut.get("cut_index", i)
+        n = 0
+        chunk_start = float(start)
+        while chunk_start < float(end):
+            chunk_end = min(chunk_start + chunk_size, float(end))
+            chunk_cut = dict(cut)
+            chunk_cut["start"] = chunk_start
+            chunk_cut["end"] = chunk_end
+            chunk_cut["cut_index"] = int(base_idx * 1000 + n)
+            chunk_cut["title"] = f"{cut.get('title', 'corte')}_part{n+1}"
+
+            paths = render_cut(video_path, chunk_cut, segments, output_dir,
+                               project_id, ace_level, use_vaapi, progress_cb)
+            for platform, path in paths.items():
+                chunk_outputs.setdefault(platform, []).append(path)
+
+            chunk_start = chunk_end
+            n += 1
+            gc.collect()
+
+        final_paths = {}
+        safe_title = "".join(
+            c for c in cut.get("title", f"corte_{base_idx}")
+            if c.isalnum() or c in " _-"
+        ).strip().replace(" ", "_")[:40]
+        for platform, files in chunk_outputs.items():
+            final_dir = os.path.join(output_dir, platform)
+            os.makedirs(final_dir, exist_ok=True)
+            final_path = os.path.join(final_dir, f"{safe_title}_{platform}.mp4")
+            if _concat_chunks(files, final_path, progress_cb=progress_cb):
+                final_paths[platform] = final_path
+
+        results[cut.get("id", cut.get("cut_index", i))] = final_paths
+        mm.release_allocation(700)
+        gc.collect()
     return results

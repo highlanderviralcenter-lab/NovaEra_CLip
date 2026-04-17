@@ -1,22 +1,19 @@
-import random
+from viral_engine.analysis_engine import Archetype, Cut, ViralEngine
 
 class ViralHookEngine:
+    def __init__(self):
+        self.engine = ViralEngine()
+
     def generate(self, tema="conteúdo", nicho="geral", platform="tiktok", archetype_id="revelacao"):
-        hooks = {
-            "despertar": f"Você não vai acreditar no que descobri sobre {tema}...",
-            "tensao": f"O que vou te contar sobre {tema} pode te deixar irritado...",
-            "confronto": f"Discordo 100% de quem fala assim sobre {tema}.",
-            "virada": f"Pensei que entendia {tema} até descobrir isso...",
-            "revelacao": f"O segredo que os experts em {tema} escondem de você.",
-            "justo_engolido": f"Fui enganado sobre {tema} por anos... até hoje.",
-            "transformacao": f"Como {tema} transformou minha vida completamente.",
-            "resolucao": f"Resolvi meu maior problema com {tema} assim...",
-            "impacto": f"Isso sobre {tema} vai chocar você.",
-            "encerramento": f"E foi assim que {tema} mudou minha vida para sempre."
-        }
-        gancho = hooks.get(archetype_id, hooks["revelacao"])
+        cut = Cut(id="hook", text=tema, duration=20.0)
+        try:
+            arch = Archetype(archetype_id)
+        except Exception:
+            arch = Archetype.REVELACAO
+        hooks = self.engine.generate_hooks(cut, arch)
+        best = hooks[0] if hooks else {"hook": f"O segredo sobre {tema}.", "scoring": {"total": 70.0}}
         return {
-            "gancho_final": gancho,
-            "archetype": archetype_id,
-            "score": round(random.uniform(70, 95), 1)
+            "gancho_final": best["hook"],
+            "archetype": arch.value,
+            "score": best.get("scoring", {}).get("total", 70.0),
         }
