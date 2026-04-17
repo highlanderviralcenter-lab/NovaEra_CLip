@@ -1,266 +1,201 @@
 #!/usr/bin/env python3
 """
-ClipFusion Memory Manager
-Otimizado para: 8GB RAM física + 4GB ZRAM (zstd)
-Modos: simple (limiar clássico) ou advanced (regras completas)
+Memory manager otimizado para 8GB RAM física + ZRAM.
+
+Regras centrais:
+- soft limit: 5GB
+- hard limit: 6GB
+- economy mode: >7GB
+- emergency stop: >7.5GB
 """
 
-import os
-import sys
 import gc
-import time
+import os
+import psutil
 import threading
-import logging
-from typing import Optional, Dict, Tuple
-from dataclasses import dataclass
-from pathlib import Path
 
-logger = logging.getLogger('ClipFusionMemory')
-
-@dataclass
-class MemoryStatus:
-    ram_total_gb: float
-    ram_used_gb: float
-    ram_free_gb: float
-    ram_percent: float
-    zram_total_gb: float
-    zram_used_gb: float
-    zram_percent: float
-    effective_available_gb: float
-    system_pressure: str  # 'normal', 'warning', 'critical', 'emergency'
 
 class MemoryManager8GB:
-    """
-    Gerenciador de memória para sistemas 8GB + ZRAM
-    """
-    
-    _instance = None
-    
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {}
-        self.mode = self.config.get('mode', 'simple')  # 'simple' ou 'advanced'
-        
-        if self.mode == 'simple':
-            # Limiar perfeito (sem pausas agressivas)
-            self.max_ram_gb = 6.0
-            self.emergency_threshold = 7.5
-            self.critical_threshold = 7.8
-            self.zram_threshold_percent = 95
-        else:
-            # Modo avançado com todas as proteções
-            self.max_ram_gb = self.config.get('max_ram_gb', 6.0)
-            self.emergency_threshold = self.config.get('emergency_threshold_gb', 7.0)
-            self.critical_threshold = self.config.get('critical_threshold_gb', 7.5)
-            self.zram_threshold_percent = self.config.get('zram_threshold_percent', 80)
-        
+    def __init__(self, physical_ram=8, zram_gb=4):
+        self.physical_ram = float(physical_ram)
+        self.expected_zram_gb = float(zram_gb)
+        self.soft_limit_gb = 5.0
+        self.hard_limit_gb = 6.0
+        self.economy_trigger_gb = 7.0
+        self.emergency_trigger_gb = 7.5
+        self.zram_pressure_threshold = 80.0
         self._lock = threading.Lock()
-        self._emergency_mode = False
+        self._economy_mode = False
+        self._paused = False
         self._allocated_mb = 0
-        self._allocation_map = {}
-        
-        self.stats = {
-            'gc_collections': 0,
-            'emergency_activations': 0,
-            'paused_operations': 0
+        self.runtime = {
+            "max_render_threads": 2,
+            "whisper_model": "tiny",
+            "preview_enabled": True,
         }
-        
-        self._detect_zram()
-    
-    @classmethod
-    def get_instance(cls, config=None):
-        if cls._instance is None:
-            cls._instance = cls(config)
-        return cls._instance
-    
-    def _detect_zram(self):
-        self.zram_device = None
-        self.zram_compressed = 0
+        self._zram_device = self._detect_zram_device()
+
+    def _detect_zram_device(self):
+        base = "/sys/block"
+        if not os.path.isdir(base):
+            return None
+        for name in os.listdir(base):
+            if name.startswith("zram"):
+                return name
+        return None
+
+    def _read_float(self, path, div=1.0):
         try:
-            for i in range(8):
-                zram_path = f"/sys/block/zram{i}/"
-                if os.path.exists(zram_path):
-                    self.zram_device = f"zram{i}"
-                    break
-            if self.zram_device:
-                logger.info(f"ZRAM detectado: {self.zram_device}")
-            else:
-                logger.warning("ZRAM não detectado")
-        except Exception as e:
-            logger.error(f"Erro detectando ZRAM: {e}")
-    
-    def _read_zram_stats(self) -> Tuple[float, float]:
-        if not self.zram_device:
-            return 0.0, 0.0
-        try:
-            with open(f"/sys/block/{self.zram_device}/disksize", 'r') as f:
-                total_bytes = int(f.read().strip())
-            mm_stat_path = f"/sys/block/{self.zram_device}/mm_stat"
-            if os.path.exists(mm_stat_path):
-                with open(mm_stat_path, 'r') as f:
-                    stats = f.read().strip().split()
-                    used_bytes = int(stats[2]) if len(stats) > 2 else 0
-            else:
-                with open(f"/sys/block/{self.zram_device}/mem_used_total", 'r') as f:
-                    used_bytes = int(f.read().strip())
-            return total_bytes / (1024**3), used_bytes / (1024**3)
-        except Exception as e:
-            logger.error(f"Erro lendo ZRAM: {e}")
-            return 0.0, 0.0
-    
-    def get_status(self) -> MemoryStatus:
-        import psutil
-        mem = psutil.virtual_memory()
-        ram_total = mem.total / (1024**3)
-        ram_used = mem.used / (1024**3)
-        ram_free = mem.available / (1024**3)
-        
-        zram_total, zram_used = self._read_zram_stats()
-        
-        zram_usage_ratio = (zram_used / zram_total) if zram_total > 0 else 0
-        zram_efficiency = max(0.5, 0.9 - zram_usage_ratio * 0.5) if self.mode == 'advanced' else 0.8
-        zram_effective = (zram_total - zram_used) * zram_efficiency if zram_total > 0 else 0
-        effective_available = ram_free + max(0, zram_effective)
-        
-        if ram_used > self.critical_threshold or (zram_total > 0 and (zram_used/zram_total)*100 > 90):
-            pressure = 'emergency'
-        elif ram_used > self.emergency_threshold or (zram_total > 0 and (zram_used/zram_total)*100 > self.zram_threshold_percent):
-            pressure = 'critical'
-        elif ram_used > self.max_ram_gb:
-            pressure = 'warning'
-        elif self.mode == 'advanced' and ram_free < 1.0 and pressure == 'normal':
-            pressure = 'warning'
+            with open(path, "r", encoding="utf-8") as f:
+                return float(f.read().strip()) / div
+        except Exception:
+            return 0.0
+
+    def _zram_stats(self):
+        if not self._zram_device:
+            return (0.0, 0.0, False)
+        root = f"/sys/block/{self._zram_device}"
+        total_gb = self._read_float(f"{root}/disksize", div=(1024 ** 3))
+        used_gb = 0.0
+
+        mm_stat = f"{root}/mm_stat"
+        if os.path.exists(mm_stat):
+            try:
+                with open(mm_stat, "r", encoding="utf-8") as f:
+                    parts = f.read().split()
+                if len(parts) >= 3:
+                    used_gb = float(parts[2]) / (1024 ** 3)
+            except Exception:
+                used_gb = 0.0
         else:
-            pressure = 'normal'
-        
-        return MemoryStatus(
-            ram_total_gb=ram_total,
-            ram_used_gb=ram_used,
-            ram_free_gb=ram_free,
-            ram_percent=mem.percent,
-            zram_total_gb=zram_total,
-            zram_used_gb=zram_used,
-            zram_percent=(zram_used/zram_total)*100 if zram_total > 0 else 0,
-            effective_available_gb=effective_available,
-            system_pressure=pressure
-        )
-    
-    def request_allocation(self, mb_required: int, priority: str = 'normal', component: str = 'unknown') -> bool:
+            used_gb = self._read_float(f"{root}/mem_used_total", div=(1024 ** 3))
+
+        return (total_gb, used_gb, total_gb > 0.0)
+
+    def get_available_ram(self):
+        status = self.get_status()
+        return status["effective_available_gb"]
+
+    def _refresh_runtime_mode(self, status):
+        ram_used = status["ram_used_gb"]
+        zram_pct = status["zram_percent"]
+        if ram_used >= self.emergency_trigger_gb or zram_pct >= 95.0:
+            self._paused = True
+            self.enter_emergency_mode()
+            return
+        if ram_used >= self.economy_trigger_gb or zram_pct >= self.zram_pressure_threshold:
+            self.enter_emergency_mode()
+            self._paused = False
+            return
+
+        self._economy_mode = False
+        self._paused = False
+        avail = status["ram_available_gb"]
+        if avail < 3.0:
+            threads = 1
+        elif avail > 5.0:
+            threads = 3
+        else:
+            threads = 2
+        self.runtime.update({
+            "max_render_threads": threads,
+            "whisper_model": "tiny",
+            "preview_enabled": True,
+        })
+
+    def request_allocation(self, mb_needed, priority="normal"):
+        mb_needed = float(mb_needed)
+        gb_needed = mb_needed / 1024.0
         with self._lock:
             status = self.get_status()
-            if status.system_pressure == 'emergency' and priority != 'critical':
+            self._refresh_runtime_mode(status)
+
+            if self._paused and priority != "critical":
+                gc.collect()
                 return False
-            projected_used = status.ram_used_gb + (mb_required / 1024)
-            if projected_used > self.critical_threshold:
-                if priority != 'critical':
-                    return False
-            if projected_used > self.max_ram_gb and priority == 'low':
+
+            projected = status["ram_used_gb"] + gb_needed
+            if projected > self.hard_limit_gb and priority != "critical":
+                gc.collect()
                 return False
-            self._allocated_mb += mb_required
-            self._allocation_map[component] = self._allocation_map.get(component, 0) + mb_required
+            if projected > self.soft_limit_gb and priority == "low":
+                return False
+
+            self._allocated_mb += mb_needed
             return True
-    
-    def release_memory(self, mb_released: int, component: str = 'unknown'):
+
+    def release_allocation(self, mb_freed):
         with self._lock:
-            self._allocated_mb = max(0, self._allocated_mb - mb_released)
-            if component in self._allocation_map:
-                self._allocation_map[component] = max(0, self._allocation_map[component] - mb_released)
-            if mb_released > 500:
-                self._soft_cleanup()
-    
-    def _soft_cleanup(self):
-        gc.collect(0)
-        self.stats['gc_collections'] += 1
-    
-    def _aggressive_cleanup(self):
-        logger.info("Executando limpeza agressiva")
-        gc.collect(2)
-        self.stats['gc_collections'] += 1
-    
+            self._allocated_mb = max(0, self._allocated_mb - float(mb_freed))
+
     def enter_emergency_mode(self):
-        if not self._emergency_mode:
-            logger.critical("Modo emergência ativado")
-            self._emergency_mode = True
-            self.stats['emergency_activations'] += 1
-    
-    def exit_emergency_mode(self):
-        if self._emergency_mode:
-            logger.info("Saindo do modo emergência")
-            self._emergency_mode = False
-    
-    def get_whisper_model(self, video_duration_minutes: float, user_choice: str = None) -> str:
+        self._economy_mode = True
+        self.runtime.update({
+            "max_render_threads": 1,
+            "whisper_model": "tiny",
+            "preview_enabled": False,
+        })
+        gc.collect()
+
+    def recommend_whisper_model(self, video_minutes, ask_small=False):
         status = self.get_status()
-        if user_choice and user_choice in ['tiny', 'base', 'small'] and status.system_pressure != 'emergency':
-            return user_choice
-        if status.system_pressure in ['critical', 'emergency'] or self._emergency_mode:
+        available = status["effective_available_gb"]
+        if self._economy_mode:
             return "tiny"
-        if video_duration_minutes > 60:
-            if status.effective_available_gb < 3.0:
-                return "tiny"
-            if status.effective_available_gb > 4.0:
-                return "small"
-            return "base"
-        if video_duration_minutes > 30 and status.effective_available_gb > 4.0:
+        if video_minutes > 60 and available > 6.0 and ask_small:
+            return "small"
+        if video_minutes > 20 and available > 4.0:
             return "base"
         return "tiny"
-    
-    def get_render_threads(self) -> int:
-        status = self.get_status()
-        if status.system_pressure == 'emergency':
-            return 1
-        if self.mode == 'advanced':
-            if status.effective_available_gb > 5.0 and status.ram_free_gb > 2.0:
-                return min(3, os.cpu_count() or 2)
-            elif status.effective_available_gb > 2.0 and status.ram_free_gb > 1.0:
-                return 2
-            else:
-                return 1
-        else:
-            return 2
-    
-    def check_render_chunk(self, chunk_size_mb: int = 500) -> bool:
-        return self.request_allocation(chunk_size_mb, priority='normal', component='render')
-    
-    def render_complete(self, chunk_size_mb: int = 500):
-        self.release_memory(chunk_size_mb, component='render')
-    
-    def should_pause(self) -> bool:
-        status = self.get_status()
-        if status.system_pressure in ['critical', 'emergency']:
-            return True
-        if self.mode == 'advanced':
-            if status.ram_free_gb < 1.0 or status.zram_percent > 80:
-                return True
-        return False
-    
-    def wait_if_needed(self, timeout: int = 300):
-        start = time.time()
-        while self.should_pause():
-            if time.time() - start > timeout:
-                raise TimeoutError("Timeout aguardando memória")
-            logger.info("Aguardando liberação de memória...")
-            time.sleep(10)
-            self._aggressive_cleanup()
-    
-    def get_gui_status(self) -> str:
-        status = self.get_status()
-        ram_used = status.ram_used_gb
-        ram_max = self.max_ram_gb
-        zram_used = status.zram_used_gb
-        zram_total = status.zram_total_gb
-        color = "green"
-        if status.system_pressure == 'warning':
-            color = "yellow"
-        elif status.system_pressure in ['critical', 'emergency']:
-            color = "red"
-        return (f"RAM: {ram_used:.1f}/{ram_max:.1f}GB | "
-                f"ZRAM: {zram_used:.1f}/{zram_total:.1f}GB | "
-                f"Pressão: {status.system_pressure}")
 
-# Singleton
-_memory_manager = None
+    def get_status(self):
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        ram_total_gb = mem.total / (1024 ** 3)
+        ram_used_gb = mem.used / (1024 ** 3)
+        ram_available_gb = mem.available / (1024 ** 3)
+        zram_total_gb, zram_used_gb, zram_active = self._zram_stats()
+        zram_percent = (zram_used_gb / zram_total_gb * 100.0) if zram_total_gb > 0 else 0.0
+        zram_free_gb = max(0.0, zram_total_gb - zram_used_gb)
 
-def get_memory_manager(config: Optional[Dict] = None) -> MemoryManager8GB:
-    global _memory_manager
-    if _memory_manager is None:
-        _memory_manager = MemoryManager8GB.get_instance(config)
-    return _memory_manager
+        # ZRAM-aware: capacidade efetiva considera RAM disponível + margem do zram livre.
+        zram_weight = 1.0 if mem.percent >= 80.0 else 0.7
+        effective_available = ram_available_gb + (zram_free_gb * zram_weight)
+        pressure = "normal"
+        if ram_used_gb >= self.emergency_trigger_gb or zram_percent >= 95.0:
+            pressure = "emergency_stop"
+        elif ram_used_gb >= self.economy_trigger_gb or zram_percent >= self.zram_pressure_threshold:
+            pressure = "economy"
+        elif ram_used_gb >= self.hard_limit_gb:
+            pressure = "hard_limit"
+        elif ram_used_gb >= self.soft_limit_gb:
+            pressure = "soft_limit"
+
+        return {
+            "ram_total_gb": ram_total_gb,
+            "ram_used_gb": ram_used_gb,
+            "ram_available_gb": ram_available_gb,
+            "ram_percent": mem.percent,
+            "zram_active": zram_active,
+            "zram_total_gb": zram_total_gb,
+            "zram_used_gb": zram_used_gb,
+            "zram_percent": zram_percent,
+            "swap_used_gb": swap.used / (1024 ** 3),
+            "swap_percent": swap.percent,
+            "effective_available_gb": effective_available,
+            "allocated_mb": self._allocated_mb,
+            "mode": "economy" if self._economy_mode else "normal",
+            "paused": self._paused,
+            "pressure": pressure,
+            "runtime": dict(self.runtime),
+        }
+
+
+_manager = None
+
+
+def get_memory_manager():
+    global _manager
+    if _manager is None:
+        _manager = MemoryManager8GB()
+    return _manager

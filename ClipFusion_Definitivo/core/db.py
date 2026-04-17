@@ -5,6 +5,9 @@ def _conn():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(str(DB_PATH))
     c.row_factory = sqlite3.Row
+    c.execute("PRAGMA journal_mode=WAL;")
+    c.execute("PRAGMA synchronous=NORMAL;")
+    c.execute("PRAGMA cache_size=10000;")
     return c
 def init():
     c = _conn()

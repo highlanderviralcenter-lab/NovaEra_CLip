@@ -9,6 +9,7 @@ from core.transcriber import WhisperTranscriber, fmt_time
 from core.prompt_builder import build_analysis_prompt, parse_ai_response
 from core.cut_engine import render_all, _detect_vaapi
 from anti_copy_modules.core import LEVEL_LABELS
+from memory_manager import get_memory_manager
 
 BG = "#0d0d1a"
 BG2 = "#151528"
@@ -46,7 +47,10 @@ class ClipFusionApp:
         self.cut_vars = {}
         self.output_dir = None
         self.hw = HardwareDetector()
+        self.mm = get_memory_manager()
+        self._mem_after_id = None
         self._build_ui()
+        self._start_memory_monitor()
 
     def run(self):
         self.root.mainloop()
@@ -58,6 +62,8 @@ class ClipFusionApp:
         tk.Label(hdr, text="vídeo longo → cortes virais prontos pra postar", font=FNT, bg=ACC, fg="#c4b5fd").pack(side="left")
         self.lbl_hw = tk.Label(hdr, text=self.hw.get_status_string(), font=("Segoe UI",8), bg=ACC, fg="#c4b5fd")
         self.lbl_hw.pack(side="right", padx=16)
+        self.lbl_mem = tk.Label(hdr, text="RAM: --/6.0GB", font=("Segoe UI",8,"bold"), bg=ACC, fg="#fef08a")
+        self.lbl_mem.pack(side="right", padx=10)
 
         s = ttk.Style()
         s.theme_use("clam")
@@ -175,6 +181,10 @@ class ClipFusionApp:
         f = tk.Frame(self.nb, bg=BG2)
         self.nb.add(f, text="🎬  Render")
         self._lbl(f, "Progresso do render", font=FNTL).pack(anchor="w", padx=30, pady=(20,4))
+        self.mem_bar = ttk.Progressbar(f, mode="determinate", maximum=100)
+        self.mem_bar.pack(fill="x", padx=30, pady=(0,8))
+        self.lbl_mem_render = self._lbl(f, "RAM: --/6.0GB", color=GRY)
+        self.lbl_mem_render.pack(anchor="w", padx=30)
         self.box_log = scrolledtext.ScrolledText(f, bg=BG3, fg=GRN, font=MONO, relief="flat", insertbackground=WHT)
         self.box_log.pack(fill="both", expand=True, padx=30, pady=10)
         self._btn(f, "📂  Abrir pasta de saída", self._open_output, GRY, wide=True).pack(padx=30, pady=(0,20))
@@ -235,6 +245,9 @@ class ClipFusionApp:
             def log(m):
                 self.root.after(0, lambda msg=m: self._status(msg, YEL))
             try:
+                st = self.mm.get_status()
+                if st.get("pressure") in {"economy", "emergency_stop"}:
+                    self.mm.enter_emergency_mode()
                 transcriber = WhisperTranscriber(model=self.v_whisper.get(), language="pt")
                 res = transcriber.transcribe(self.video_path, progress_callback=log)
                 self.segments = res["segments"]
@@ -459,6 +472,9 @@ class ClipFusionApp:
 
     def _log(self, m):
         self.box_log.insert("end", m + "\n")
+        total_lines = int(self.box_log.index("end-1c").split(".")[0])
+        if total_lines > 1000:
+            self.box_log.delete("1.0", f"{total_lines-1000}.0")
         self.box_log.see("end")
 
     def _status(self, m, color=GRY):
@@ -476,6 +492,25 @@ class ClipFusionApp:
 
     def _sep(self, p):
         tk.Frame(p, bg=BG3, height=1).pack(fill="x", padx=30, pady=16)
+
+    def _start_memory_monitor(self):
+        def tick():
+            st = self.mm.get_status()
+            used = st.get("ram_used_gb", 0.0)
+            pct = min(100.0, (used / 6.0) * 100.0)
+            txt = f"RAM: {used:.1f}GB/6.0GB | ZRAM: {st.get('zram_used_gb',0.0):.1f}/{st.get('zram_total_gb',0.0):.1f}GB"
+            color = "#c4b5fd"
+            if pct >= 90:
+                color = "#f87171"
+            elif pct >= 75:
+                color = "#fef08a"
+            self.lbl_mem.config(text=txt, fg=color)
+            self.mem_bar["value"] = pct
+            self.lbl_mem_render.config(text=txt, fg=RED if pct >= 90 else GRY)
+            self._mem_after_id = self.root.after(10000, tick)
+
+        if self._mem_after_id is None:
+            tick()
 
 if __name__ == "__main__":
     ClipFusionApp().run()
