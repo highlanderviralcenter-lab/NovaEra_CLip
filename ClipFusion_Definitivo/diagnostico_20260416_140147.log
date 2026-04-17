@@ -1,0 +1,87 @@
+🔍 DIAGNÓSTICO CLIPFUSION - qui 16 abr 2026 14:01:47 -03
+================================
+
+💻 HARDWARE:
+CPU: Intel(R) Core(TM) i5-6200U CPU @ 2.30GHz
+RAM: 7,7Gi
+ZRAM: Não ativo
+00:02.0 VGA compatible controller: Intel Corporation Skylake GT2 [HD Graphics 520] (rev 07)
+
+🎬 VA-API:
+libva info: VA-API version 1.17.0
+libva info: User environment variable requested driver 'iHD'
+libva info: Trying to open /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
+libva info: Found init function __vaDriverInit_1_17
+libva info: va_openDriver() returns 0
+vainfo: VA-API version: 1.17 (libva 2.12.0)
+vainfo: Driver version: Intel iHD driver for Intel(R) Gen Graphics - 23.1.1 ()
+vainfo: Supported profile and entrypoints
+      VAProfileNone                   :	VAEntrypointVideoProc
+      VAProfileNone                   :	VAEntrypointStats
+      VAProfileMPEG2Simple            :	VAEntrypointVLD
+      VAProfileMPEG2Simple            :	VAEntrypointEncSlice
+      VAProfileMPEG2Main              :	VAEntrypointVLD
+      VAProfileMPEG2Main              :	VAEntrypointEncSlice
+      VAProfileH264Main               :	VAEntrypointVLD
+      VAProfileH264Main               :	VAEntrypointEncSlice
+      VAProfileH264Main               :	VAEntrypointFEI
+      VAProfileH264Main               :	VAEntrypointEncSliceLP
+      VAProfileH264High               :	VAEntrypointVLD
+      VAProfileH264High               :	VAEntrypointEncSlice
+
+📁 ARQUIVOS:
+-rw-r--r-- 1 highlander highlander  317 abr 16 13:22 config.yaml
+-rw-r--r-- 1 highlander highlander 6186 abr 16 13:22 core/cut_engine.py
+-rwxr-xr-x 1 highlander highlander  159 abr 16 13:33 run.sh
+
+⚙️  CONFIG:
+hardware:
+  encoder_preferido: "auto"
+  max_ram_gb: 6
+  usar_gpu_intel: true
+whisper:
+  modelo: "tiny"
+  idioma: "pt"
+  dispositivo: "cpu"
+render:
+  preset: "fast"
+  crf: 23
+  usar_vaapi: true
+anti_copy:
+  nivel: "basic"
+gui:
+  tema_escuro: true
+  janela_inicio: "1120x800"
+platforms:
+  - tiktok
+  - reels
+  - shorts
+
+🧪 TESTE DE IMPORTAÇÃO:
+✅ WhisperTranscriber OK
+❌ cut_engine: invalid syntax (cut_engine.py, line 50)
+❌ MainGUI: invalid syntax (main_gui.py, line 50)
+
+🧠 MEMÓRIA:
+               total       usada       livre    compart.  buff/cache  disponível
+Mem.:          7,7Gi       3,7Gi       2,5Gi       922Mi       2,8Gi       4,0Gi
+Swap:          2,0Gi          0B       2,0Gi
+
+Processos Python rodando:
+
+🎥 FFMPEG:
+ffmpeg version 5.1.8-0+deb12u1 Copyright (c) 2000-2025 the FFmpeg developers
+built with gcc 12 (Debian 12.2.0-14+deb12u1)
+configuration: --prefix=/usr --extra-version=0+deb12u1 --toolchain=hardened --libdir=/usr/lib/x86_64-linux-gnu --incdir=/usr/include/x86_64-linux-gnu --arch=amd64 --enable-gpl --disable-stripping --enable-gnutls --enable-ladspa --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcaca --enable-libcdio --enable-libcodec2 --enable-libdav1d --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libglslang --enable-libgme --enable-libgsm --enable-libjack --enable-libmp3lame --enable-libmysofa --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libpulse --enable-librabbitmq --enable-librist --enable-librubberband --enable-libshine --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-libzvbi --enable-lv2 --enable-omx --enable-openal --enable-opencl --enable-opengl --enable-sdl2 --disable-sndio --enable-libjxl --enable-pocketsphinx --enable-librsvg --enable-libmfx --enable-libdc1394 --enable-libdrm --enable-libiec61883 --enable-chromaprint --enable-frei0r --enable-libx264 --enable-libplacebo --enable-librav1e --enable-shared
+
+Codecs VA-API disponíveis:
+ DEV.LS h264                 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (decoders: h264 h264_v4l2m2m h264_qsv h264_cuvid ) (encoders: libx264 libx264rgb h264_nvenc h264_omx h264_qsv h264_v4l2m2m h264_vaapi )
+ DEV.L. hevc                 H.265 / HEVC (High Efficiency Video Coding) (decoders: hevc hevc_qsv hevc_v4l2m2m hevc_cuvid ) (encoders: libx265 hevc_nvenc hevc_qsv hevc_v4l2m2m hevc_vaapi )
+ DEVIL. mjpeg                Motion JPEG (decoders: mjpeg mjpeg_cuvid mjpeg_qsv ) (encoders: mjpeg mjpeg_qsv mjpeg_vaapi )
+ DEV.L. mpeg2video           MPEG-2 video (decoders: mpeg2video mpegvideo mpeg2_v4l2m2m mpeg2_qsv mpeg2_cuvid ) (encoders: mpeg2video mpeg2_qsv mpeg2_vaapi )
+ DEV.L. vp8                  On2 VP8 (decoders: vp8 vp8_v4l2m2m libvpx vp8_cuvid vp8_qsv ) (encoders: libvpx vp8_v4l2m2m vp8_vaapi )
+ DEV.L. vp9                  Google VP9 (decoders: vp9 vp9_v4l2m2m libvpx-vp9 vp9_cuvid vp9_qsv ) (encoders: libvpx-vp9 vp9_vaapi vp9_qsv )
+
+================================
+📄 Relatório salvo em: diagnostico_20260416_140147.log
+Envie este arquivo para análise
